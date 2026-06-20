@@ -216,6 +216,9 @@ def log_out():
 
 
 def submit_and_save(user_id, concept, explanation, state, gap, question, answer):
+    print("submit_and_save called")
+    print("user_id value:", user_id)
+    print("supabase is None:", supabase is None)
     closed, verdict, teaching = submit_answer(concept, gap, question, answer)
 
     if user_id and _is_groq_result(closed):
