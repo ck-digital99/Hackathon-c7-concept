@@ -220,6 +220,7 @@ def submit_and_save(user_id, concept, explanation, state, gap, question, answer)
 
     if user_id and _is_groq_result(closed):
         try:
+            print("Attempting to save session with user_id:", user_id)
             supabase.table("sessions").insert(
                 {
                     "user_id": user_id,
@@ -234,7 +235,8 @@ def submit_and_save(user_id, concept, explanation, state, gap, question, answer)
                     "teaching": teaching,
                 }
             ).execute()
-        except Exception:
+        except Exception as e:
+            print(e)
             gr.Warning("Could not save your session. Please try again later.")
 
     return closed, verdict, teaching
