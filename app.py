@@ -4,8 +4,18 @@ import re
 import gradio as gr
 from dotenv import load_dotenv
 from groq import Groq
+from supabase import create_client
 
 load_dotenv()
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_ANON_KEY")
+supabase = None
+try:
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        raise ValueError("SUPABASE_URL or SUPABASE_ANON_KEY is not set")
+    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+except Exception as e:
+    print(f"Warning: Supabase client could not be initialized ({e}). Auth and session saving are disabled.")
 
 SYSTEM_PROMPT = """You are a concept checker for systems thinking concepts. Read the learner's explanation carefully.
 First, detect which state the explanation is in. Read the full explanation before deciding.
@@ -129,19 +139,146 @@ def submit_answer(concept, gap, question, answer):
         return "Something went wrong. Please try again.", "", ""
 
 
+def _is_groq_result(closed):
+    return closed and not closed.startswith("Please") and not closed.startswith("Something")
+
+
+def sign_up(email, password):
+    if not email.strip() or not password.strip():
+        return "Please enter your email and password.", gr.update(visible=True), gr.update(visible=False)
+
+    try:
+        supabase.auth.sign_up({"email": email.strip(), "password": password})
+        return (
+            "Check your email to confirm your account",
+            gr.update(visible=True),
+            gr.update(visible=False),
+        )
+    except Exception:
+        return (
+            "Could not create account. Please try again.",
+            gr.update(visible=True),
+            gr.update(visible=False),
+        )
+
+
+def log_in(email, password):
+    if not email.strip() or not password.strip():
+        return (
+            "Please enter your email and password.",
+            gr.update(visible=True),
+            gr.update(visible=False),
+            None,
+            None,
+        )
+
+    try:
+        response = supabase.auth.sign_in_with_password(
+            {"email": email.strip(), "password": password}
+        )
+        session = response.session
+        if session and session.user:
+            return (
+                "",
+                gr.update(visible=False),
+                gr.update(visible=True),
+                session.user.id,
+                session.access_token,
+            )
+    except Exception:
+        pass
+
+    return (
+        "Invalid email or password",
+        gr.update(visible=True),
+        gr.update(visible=False),
+        None,
+        None,
+    )
+
+
+def log_out():
+    try:
+        supabase.auth.sign_out()
+    except Exception:
+        pass
+
+    return (
+        gr.update(visible=True),
+        gr.update(visible=False),
+        None,
+        None,
+        "Logged out",
+    )
+
+
+def submit_and_save(user_id, concept, explanation, state, gap, question, answer):
+    closed, verdict, teaching = submit_answer(concept, gap, question, answer)
+
+    if user_id and _is_groq_result(closed):
+        try:
+            supabase.table("sessions").insert(
+                {
+                    "user_id": user_id,
+                    "concept": concept,
+                    "explanation": explanation,
+                    "state": state,
+                    "gap_sentence": gap,
+                    "follow_up_question": question,
+                    "follow_up_answer": answer,
+                    "gap_closed": closed,
+                    "verdict": verdict,
+                    "teaching": teaching,
+                }
+            ).execute()
+        except Exception:
+            gr.Warning("Could not save your session. Please try again later.")
+
+    return closed, verdict, teaching
+
+
 with gr.Blocks() as demo:
-    name = gr.Textbox(label="Your name")
-    concept = gr.Dropdown(choices=CONCEPTS, label="Concept")
-    explanation = gr.Textbox(label="Your explanation", lines=10)
-    check_btn = gr.Button("Check my understanding")
-    state_output = gr.Textbox(label="State")
-    gap_output = gr.Textbox(label="Gap found")
-    question_output = gr.Textbox(label="Follow-up question")
-    followup_answer = gr.Textbox(label="Your answer to the follow-up question", lines=5)
-    submit_btn = gr.Button("Submit my answer")
-    closed_output = gr.Textbox(label="Gap closed")
-    verdict_output = gr.Textbox(label="Verdict")
-    teaching_output = gr.Textbox(label="What you should know")
+    user_id_state = gr.State(value=None)
+    session_token_state = gr.State(value=None)
+
+    with gr.Column(visible=True) as login_screen:
+        email_input = gr.Textbox(label="Email")
+        password_input = gr.Textbox(label="Password", type="password")
+        login_btn = gr.Button("Log in")
+        signup_btn = gr.Button("Sign up")
+        auth_status = gr.Textbox(label="Status")
+
+    with gr.Column(visible=False) as main_screen:
+        name = gr.Textbox(label="Your name")
+        concept = gr.Dropdown(choices=CONCEPTS, label="Concept")
+        explanation = gr.Textbox(label="Your explanation", lines=10)
+        check_btn = gr.Button("Check my understanding")
+        state_output = gr.Textbox(label="State", visible=False)
+        gap_output = gr.Textbox(label="Gap found")
+        question_output = gr.Textbox(label="Follow-up question")
+        followup_answer = gr.Textbox(label="Your answer to the follow-up question", lines=5)
+        submit_btn = gr.Button("Submit my answer")
+        closed_output = gr.Textbox(label="Gap closed")
+        verdict_output = gr.Textbox(label="Verdict")
+        teaching_output = gr.Textbox(label="What you should know")
+        logout_btn = gr.Button("Log out")
+
+    signup_btn.click(
+        fn=sign_up,
+        inputs=[email_input, password_input],
+        outputs=[auth_status, login_screen, main_screen],
+    )
+
+    login_btn.click(
+        fn=log_in,
+        inputs=[email_input, password_input],
+        outputs=[auth_status, login_screen, main_screen, user_id_state, session_token_state],
+    )
+
+    logout_btn.click(
+        fn=log_out,
+        outputs=[login_screen, main_screen, user_id_state, session_token_state, auth_status],
+    )
 
     check_btn.click(
         fn=check_understanding,
@@ -150,8 +287,16 @@ with gr.Blocks() as demo:
     )
 
     submit_btn.click(
-        fn=submit_answer,
-        inputs=[concept, gap_output, question_output, followup_answer],
+        fn=submit_and_save,
+        inputs=[
+            user_id_state,
+            concept,
+            explanation,
+            state_output,
+            gap_output,
+            question_output,
+            followup_answer,
+        ],
         outputs=[closed_output, verdict_output, teaching_output],
     )
 
