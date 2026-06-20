@@ -14,8 +14,9 @@ try:
     if not SUPABASE_URL or not SUPABASE_KEY:
         raise ValueError("SUPABASE_URL or SUPABASE_ANON_KEY is not set")
     supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+    print("Supabase initialized successfully")
 except Exception as e:
-    print(f"Warning: Supabase client could not be initialized ({e}). Auth and session saving are disabled.")
+    print("Supabase init failed:", e)
 
 SYSTEM_PROMPT = """You are a concept checker for systems thinking concepts. Read the learner's explanation carefully.
 First, detect which state the explanation is in. Read the full explanation before deciding.
@@ -144,6 +145,7 @@ def _is_groq_result(closed):
 
 
 def sign_up(email, password):
+    print("sign_up called")
     if not email.strip() or not password.strip():
         return "Please enter your email and password.", gr.update(visible=True), gr.update(visible=False)
 
