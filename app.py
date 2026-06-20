@@ -154,7 +154,8 @@ def sign_up(email, password):
             gr.update(visible=True),
             gr.update(visible=False),
         )
-    except Exception:
+    except Exception as e:
+        print(e)
         return (
             "Could not create account. Please try again.",
             gr.update(visible=True),
